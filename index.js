@@ -27,4 +27,10 @@ app.delete("/delete-question/:index", (req, res) => {
   res.json({ message: "Deleted" });
 });
 
+app.put("/update-question/:index", (req, res) => {
+  const i = req.params.index;
+  questions[i] = req.body;
+  res.json({ message: "Updated" });
+});
+
 app.listen(5000, () => console.log("Server running"));
