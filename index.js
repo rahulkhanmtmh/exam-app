@@ -21,4 +21,10 @@ app.get("/questions", (req, res) => {
   res.json(questions);
 });
 
+app.delete("/delete-question/:index", (req, res) => {
+  const i = req.params.index;
+  questions.splice(i, 1);
+  res.json({ message: "Deleted" });
+});
+
 app.listen(5000, () => console.log("Server running"));
