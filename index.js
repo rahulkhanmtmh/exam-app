@@ -21,6 +21,8 @@ app.get("/questions", (req, res) => {
   res.json(questions);
 });
 
+mongoose.connect("mongodb+srv://admin:Rahul1994@cluster0.yej1g2d.mongodb.net/?appName=Cluster0 ")
+
 app.delete("/delete-question/:index", (req, res) => {
   const i = req.params.index;
   questions.splice(i, 1);
