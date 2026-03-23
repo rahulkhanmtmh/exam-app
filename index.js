@@ -1,38 +1,65 @@
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
+const Question = require("./models/Question"); // Import model
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-let questions = [];
+// Connect to MongoDB Atlas
+const mongoURI = "mongodb+srv://admin:Rahul1994@cluster0.yej1g2d.mongodb.net/examDB?retryWrites=true&w=majority&appName=Cluster0";
+// Note: I added 'examDB' as the database name. You can change it if you want.
+
+mongoose.connect(mongoURI)
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 
 app.get("/", (req, res) => {
-  res.send("Backend running");
+  res.send("Backend running with MongoDB");
 });
 
-app.post("/add-question", (req, res) => {
-  questions.push(req.body);
-  res.json({ message: "Added" });
+// Add a new question
+app.post("/add-question", async (req, res) => {
+  try {
+    const question = new Question(req.body);
+    await question.save();
+    res.json({ message: "Added" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get("/questions", (req, res) => {
-  res.json(questions);
+// Get all questions
+app.get("/questions", async (req, res) => {
+  try {
+    const questions = await Question.find();
+    res.json(questions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-mongoose.connect("mongodb+srv://admin:Rahul1994@cluster0.yej1g2d.mongodb.net/?appName=Cluster0 ")
-
-app.delete("/delete-question/:index", (req, res) => {
-  const i = req.params.index;
-  questions.splice(i, 1);
-  res.json({ message: "Deleted" });
+// Delete a question by its MongoDB _id
+app.delete("/delete-question/:id", async (req, res) => {
+  try {
+    await Question.findByIdAndDelete(req.params.id);
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put("/update-question/:index", (req, res) => {
-  const i = req.params.index;
-  questions[i] = req.body;
-  res.json({ message: "Updated" });
+// Update a question by its MongoDB _id
+app.put("/update-question/:id", async (req, res) => {
+  try {
+    await Question.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ message: "Updated" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.listen(5000, () => console.log("Server running"));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
