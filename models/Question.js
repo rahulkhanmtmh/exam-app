@@ -6,6 +6,7 @@ const questionSchema = new mongoose.Schema({
   chapter: String,
   text: String,
   marks: Number,
-});
+  userId: String
+}, { timestamps: true });
 
 module.exports = mongoose.model("Question", questionSchema);
