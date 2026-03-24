@@ -61,5 +61,13 @@ app.put("/update-question/:id", async (req, res) => {
   }
 });
 
+app.get("/check-db", async (req, res) => {
+  try {
+    await mongoose.connection.db.admin().ping();
+    res.json({ status: "MongoDB connected" });
+  } catch (err) {
+    res.status(500).json({ status: "MongoDB not connected", error: err.message });
+  }
+});
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
