@@ -8,12 +8,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
-const mongoURI = "mongodb+srv://admin:Rahul1994@cluster0.yej1g2d.mongodb.net/examDB?retryWrites=true&w=majority&appName=Cluster0";
+// MongoDB connection string
+const mongoURI =
+  "mongodb+srv://admin:Rahul1994@cluster0.yej1g2d.mongodb.net/examDB?retryWrites=true&w=majority&appName=Cluster0";
 
-mongoose.connect(mongoURI)
+mongoose
+  .connect(mongoURI)
   .then(() => console.log("✅ Connected to MongoDB"))
-  .catch(err => console.error("❌ MongoDB connection error:", err));
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 app.get("/", (req, res) => {
   res.send("Backend running with MongoDB");
