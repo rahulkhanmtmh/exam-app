@@ -58,5 +58,18 @@ app.put("/update-question/:id", async (req, res) => {
   }
 });
 
+// Bulk insert
+app.post("/bulk-questions", async (req, res) => {
+  try {
+    const questions = req.body; // expects array of question objects
+    if (!Array.isArray(questions)) {
+      return res.status(400).json({ error: "Expected array of questions" });
+    }
+    const result = await Question.insertMany(questions);
+    res.json({ message: "Bulk added", count: result.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
