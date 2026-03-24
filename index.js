@@ -9,9 +9,15 @@ const Question = require("./models/Question");
 
 const app = express();
 
+// ==========================
+// MIDDLEWARE
+// ==========================
 app.use(cors());
 app.use(express.json());
 
+// ==========================
+// DB CONNECT
+// ==========================
 const mongoURI = process.env.MONGO_URI;
 
 mongoose
@@ -19,18 +25,45 @@ mongoose
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => console.log(err));
 
-// 🔐 Secret key (change later)
-const JWT_SECRET = "mysecretkey";
+// ==========================
+// SECRET
+// ==========================
+const JWT_SECRET = "mysecretkey"; // later move to env
 
 // ==========================
-// 🧑‍💻 REGISTER
+// AUTH MIDDLEWARE (FIXED)
+// ==========================
+function auth(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ message: "No token" });
+  }
+
+  try {
+    // ✅ Remove "Bearer "
+    const token = authHeader.split(" ")[1];
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.id;
+
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+}
+
+// ==========================
+// REGISTER
 // ==========================
 app.post("/register", async (req, res) => {
   try {
     const { schoolName, email, password } = req.body;
 
     const existing = await User.findOne({ email });
-    if (existing) return res.json({ message: "User already exists" });
+    if (existing) {
+      return res.json({ message: "User already exists" });
+    }
 
     const hashed = await bcrypt.hash(password, 10);
 
@@ -49,19 +82,28 @@ app.post("/register", async (req, res) => {
 });
 
 // ==========================
-// 🔐 LOGIN
+// LOGIN
 // ==========================
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.json({ message: "User not found" });
+    if (!user) {
+      return res.json({ message: "User not found" });
+    }
 
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.json({ message: "Wrong password" });
+    if (!match) {
+      return res.json({ message: "Wrong password" });
+    }
 
-    const token = jwt.sign({ id: user._id }, JWT_SECRET);
+    // ✅ Token with expiry
+    const token = jwt.sign(
+      { id: user._id },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.json({
       message: "Login success",
@@ -74,24 +116,7 @@ app.post("/login", async (req, res) => {
 });
 
 // ==========================
-// 🔒 MIDDLEWARE (PROTECT ROUTES)
-// ==========================
-function auth(req, res, next) {
-  const token = req.headers.authorization;
-
-  if (!token) return res.status(401).json({ message: "No token" });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.id;
-    next();
-  } catch {
-    res.status(401).json({ message: "Invalid token" });
-  }
-}
-
-// ==========================
-// 📚 ADD QUESTION (PROTECTED)
+// ADD QUESTION
 // ==========================
 app.post("/add-question", auth, async (req, res) => {
   try {
@@ -101,6 +126,7 @@ app.post("/add-question", auth, async (req, res) => {
     });
 
     await question.save();
+
     res.json({ message: "Added" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -108,16 +134,56 @@ app.post("/add-question", auth, async (req, res) => {
 });
 
 // ==========================
-// 📚 GET QUESTIONS (ONLY USER)
+// GET QUESTIONS (USER ONLY)
 // ==========================
 app.get("/questions", auth, async (req, res) => {
   try {
-    const questions = await Question.find({ userId: req.userId });
+    const questions = await Question.find({ userId: req.userId }).sort({ createdAt: -1 });
+
     res.json(questions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// ==========================
+// DELETE QUESTION
+// ==========================
+app.delete("/delete-question/:id", auth, async (req, res) => {
+  try {
+    await Question.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.userId,
+    });
+
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// UPDATE QUESTION
+// ==========================
+app.put("/update-question/:id", auth, async (req, res) => {
+  try {
+    await Question.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      req.body,
+      { new: true }
+    );
+
+    res.json({ message: "Updated" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// SERVER START
+// ==========================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log("Server running"));
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
