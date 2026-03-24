@@ -1,88 +1,123 @@
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+
+const User = require("./models/User");
 const Question = require("./models/Question");
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// ✅ MongoDB connection using ENV
+const mongoURI = process.env.MONGO_URI;
+
 mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+  .connect(mongoURI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.log(err));
 
-// Test route
-app.get("/", (req, res) => {
-  res.send("Backend running with MongoDB 🚀");
-});
+// 🔐 Secret key (change later)
+const JWT_SECRET = "mysecretkey";
 
-// ✅ Add Question
-app.post("/add-question", async (req, res) => {
+// ==========================
+// 🧑‍💻 REGISTER
+// ==========================
+app.post("/register", async (req, res) => {
   try {
-    const question = new Question(req.body);
-    await question.save();
-    res.json({ message: "Question Added ✅" });
+    const { schoolName, email, password } = req.body;
+
+    const existing = await User.findOne({ email });
+    if (existing) return res.json({ message: "User already exists" });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = new User({
+      schoolName,
+      email,
+      password: hashed,
+    });
+
+    await user.save();
+
+    res.json({ message: "Registered successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Get All Questions
-app.get("/questions", async (req, res) => {
+// ==========================
+// 🔐 LOGIN
+// ==========================
+app.post("/login", async (req, res) => {
   try {
-    const questions = await Question.find();
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) return res.json({ message: "User not found" });
+
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.json({ message: "Wrong password" });
+
+    const token = jwt.sign({ id: user._id }, JWT_SECRET);
+
+    res.json({
+      message: "Login success",
+      token,
+      userId: user._id,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// 🔒 MIDDLEWARE (PROTECT ROUTES)
+// ==========================
+function auth(req, res, next) {
+  const token = req.headers.authorization;
+
+  if (!token) return res.status(401).json({ message: "No token" });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.id;
+    next();
+  } catch {
+    res.status(401).json({ message: "Invalid token" });
+  }
+}
+
+// ==========================
+// 📚 ADD QUESTION (PROTECTED)
+// ==========================
+app.post("/add-question", auth, async (req, res) => {
+  try {
+    const question = new Question({
+      ...req.body,
+      userId: req.userId,
+    });
+
+    await question.save();
+    res.json({ message: "Added" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// 📚 GET QUESTIONS (ONLY USER)
+// ==========================
+app.get("/questions", auth, async (req, res) => {
+  try {
+    const questions = await Question.find({ userId: req.userId });
     res.json(questions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Delete Question (using MongoDB _id)
-app.delete("/delete-question/:id", async (req, res) => {
-  try {
-    await Question.findByIdAndDelete(req.params.id);
-    res.json({ message: "Deleted ✅" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Update Question (using MongoDB _id)
-app.put("/update-question/:id", async (req, res) => {
-  try {
-    await Question.findByIdAndUpdate(req.params.id, req.body);
-    res.json({ message: "Updated ✅" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Bulk Insert Questions
-app.post("/bulk-questions", async (req, res) => {
-  try {
-    const questions = req.body;
-
-    if (!Array.isArray(questions)) {
-      return res.status(400).json({ error: "Expected array of questions" });
-    }
-
-    const result = await Question.insertMany(questions);
-    res.json({ message: "Bulk added ✅", count: result.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Start Server
 const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("Server running"));
