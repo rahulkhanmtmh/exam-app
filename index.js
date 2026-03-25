@@ -1,3 +1,11 @@
+// ==========================
+// ENV CONFIG
+// ==========================
+require("dotenv").config();
+
+// ==========================
+// IMPORTS
+// ==========================
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
@@ -6,22 +14,26 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const axios = require("axios");
 const fs = require("fs");
+const Tesseract = require("tesseract.js");
 
 const User = require("./models/User");
 const Question = require("./models/Question");
 
+// ==========================
+// APP INIT
+// ==========================
 const app = express();
 
-// ==========================
-// MIDDLEWARE
-// ==========================
 app.use(cors());
 app.use(express.json());
 
 // ==========================
 // FILE UPLOAD (OCR)
 // ==========================
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  dest: "uploads/",
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
 
 // ==========================
 // DB CONNECT
@@ -29,12 +41,15 @@ const upload = multer({ dest: "uploads/" });
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => console.log(err));
+  .catch((err) => {
+    console.error("❌ DB Error:", err.message);
+    process.exit(1);
+  });
 
 // ==========================
 // SECRET
 // ==========================
-const JWT_SECRET = process.env.JWT_SECRET || "mysecretkey";
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
 // ==========================
 // AUTH MIDDLEWARE
@@ -43,7 +58,7 @@ function auth(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(401).json({ message: "No token" });
+    return res.status(401).json({ message: "No token provided" });
   }
 
   try {
@@ -52,7 +67,7 @@ function auth(req, res, next) {
 
     req.userId = decoded.id;
     next();
-  } catch (err) {
+  } catch {
     return res.status(401).json({ message: "Invalid token" });
   }
 }
@@ -64,9 +79,13 @@ app.post("/register", async (req, res) => {
   try {
     const { schoolName, email, password } = req.body;
 
+    if (!schoolName || !email || !password) {
+      return res.status(400).json({ message: "All fields required" });
+    }
+
     const existing = await User.findOne({ email });
     if (existing) {
-      return res.json({ message: "User already exists" });
+      return res.status(400).json({ message: "User already exists" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -92,14 +111,18 @@ app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({ message: "Missing credentials" });
+    }
+
     const user = await User.findOne({ email });
     if (!user) {
-      return res.json({ message: "User not found" });
+      return res.status(400).json({ message: "User not found" });
     }
 
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
-      return res.json({ message: "Wrong password" });
+      return res.status(400).json({ message: "Wrong password" });
     }
 
     const token = jwt.sign(
@@ -130,7 +153,7 @@ app.post("/add-question", auth, async (req, res) => {
 
     await question.save();
 
-    res.json({ message: "Added" });
+    res.json({ message: "Question added" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -156,12 +179,16 @@ app.get("/questions", auth, async (req, res) => {
 // ==========================
 app.delete("/delete-question/:id", auth, async (req, res) => {
   try {
-    await Question.findOneAndDelete({
+    const deleted = await Question.findOneAndDelete({
       _id: req.params.id,
       userId: req.userId,
     });
 
-    res.json({ message: "Deleted" });
+    if (!deleted) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+
+    res.json({ message: "Deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -172,61 +199,103 @@ app.delete("/delete-question/:id", auth, async (req, res) => {
 // ==========================
 app.put("/update-question/:id", auth, async (req, res) => {
   try {
-    await Question.findOneAndUpdate(
+    const updated = await Question.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
       req.body,
       { new: true }
     );
 
-    res.json({ message: "Updated" });
+    if (!updated) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+
+    res.json({ message: "Updated successfully", updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// 📷 OCR ROUTE (FREE)
+// OCR ROUTE (MAIN + FALLBACK)
 // ==========================
 app.post("/ocr", auth, upload.single("image"), async (req, res) => {
+  let imagePath;
+
   try {
     if (!req.file) {
-      return res.json({ text: "No image uploaded" });
+      return res.status(400).json({ text: "No image uploaded" });
     }
 
-    const imagePath = req.file.path;
+    imagePath = req.file.path;
 
+    // convert to base64
     const base64Image =
       "data:image/jpeg;base64," +
       fs.readFileSync(imagePath, "base64");
 
-    const response = await axios.post(
-      "https://api.ocr.space/parse/image",
-      {
-        apikey: process.env.OCR_API_KEY, // 🔑 from Render
-        language: "eng+ben",
-        isOverlayRequired: false,
-        base64Image: base64Image,
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
+    let parsedText = "";
+
+    try {
+      // ===== PRIMARY OCR (OCR.space) =====
+      const response = await axios.post(
+        "https://api.ocr.space/parse/image",
+        {
+          base64Image: base64Image,
+          language: "eng",
+          isOverlayRequired: false,
+          apikey: process.env.OCR_API_KEY,
         },
+        {
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+
+      parsedText =
+        response.data?.ParsedResults?.[0]?.ParsedText;
+
+      if (!parsedText || parsedText.trim() === "") {
+        throw new Error("Empty OCR result");
       }
-    );
 
-    const parsedText =
-      response.data?.ParsedResults?.[0]?.ParsedText ||
-      "⚠️ No text detected. Try clearer image.";
+    } catch (err) {
+      console.log("⚠️ OCR.space failed → Using Tesseract fallback");
 
-    // delete uploaded file
-    fs.unlinkSync(imagePath);
+      // ===== FALLBACK OCR =====
+      const result = await Tesseract.recognize(
+        imagePath,
+        "eng+ben"
+      );
+
+      parsedText = result.data.text;
+    }
 
     res.json({ text: parsedText });
 
   } catch (err) {
-    console.log(err);
+    console.error("OCR Error:", err.message);
     res.status(500).json({ text: "OCR failed" });
+
+  } finally {
+    // ===== SAFE CLEANUP =====
+    if (imagePath && fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
   }
+});
+
+// ==========================
+// HEALTH CHECK
+// ==========================
+app.get("/", (req, res) => {
+  res.send("✅ API Running");
+});
+
+// ==========================
+// GLOBAL ERROR HANDLER
+// ==========================
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: "Something went wrong" });
 });
 
 // ==========================
