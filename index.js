@@ -3,6 +3,9 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const axios = require("axios");
+const fs = require("fs");
 
 const User = require("./models/User");
 const Question = require("./models/Question");
@@ -16,22 +19,25 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================
+// FILE UPLOAD (OCR)
+// ==========================
+const upload = multer({ dest: "uploads/" });
+
+// ==========================
 // DB CONNECT
 // ==========================
-const mongoURI = process.env.MONGO_URI;
-
 mongoose
-  .connect(mongoURI)
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => console.log(err));
 
 // ==========================
 // SECRET
 // ==========================
-const JWT_SECRET = "mysecretkey"; // later move to env
+const JWT_SECRET = process.env.JWT_SECRET || "mysecretkey";
 
 // ==========================
-// AUTH MIDDLEWARE (FIXED)
+// AUTH MIDDLEWARE
 // ==========================
 function auth(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -41,12 +47,10 @@ function auth(req, res, next) {
   }
 
   try {
-    // ✅ Remove "Bearer "
     const token = authHeader.split(" ")[1];
-
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.id;
 
+    req.userId = decoded.id;
     next();
   } catch (err) {
     return res.status(401).json({ message: "Invalid token" });
@@ -98,7 +102,6 @@ app.post("/login", async (req, res) => {
       return res.json({ message: "Wrong password" });
     }
 
-    // ✅ Token with expiry
     const token = jwt.sign(
       { id: user._id },
       JWT_SECRET,
@@ -134,11 +137,13 @@ app.post("/add-question", auth, async (req, res) => {
 });
 
 // ==========================
-// GET QUESTIONS (USER ONLY)
+// GET QUESTIONS
 // ==========================
 app.get("/questions", auth, async (req, res) => {
   try {
-    const questions = await Question.find({ userId: req.userId }).sort({ createdAt: -1 });
+    const questions = await Question.find({
+      userId: req.userId,
+    }).sort({ createdAt: -1 });
 
     res.json(questions);
   } catch (err) {
@@ -176,6 +181,51 @@ app.put("/update-question/:id", auth, async (req, res) => {
     res.json({ message: "Updated" });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// 📷 OCR ROUTE (FREE)
+// ==========================
+app.post("/ocr", auth, upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.json({ text: "No image uploaded" });
+    }
+
+    const imagePath = req.file.path;
+
+    const base64Image =
+      "data:image/jpeg;base64," +
+      fs.readFileSync(imagePath, "base64");
+
+    const response = await axios.post(
+      "https://api.ocr.space/parse/image",
+      {
+        apikey: process.env.OCR_API_KEY, // 🔑 from Render
+        language: "eng+ben",
+        isOverlayRequired: false,
+        base64Image: base64Image,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const parsedText =
+      response.data?.ParsedResults?.[0]?.ParsedText ||
+      "⚠️ No text detected. Try clearer image.";
+
+    // delete uploaded file
+    fs.unlinkSync(imagePath);
+
+    res.json({ text: parsedText });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ text: "OCR failed" });
   }
 });
 
